@@ -70,21 +70,38 @@ const CATEGORIES = [
 ];
 
 const ALL_VARIETIES = CATEGORIES.flatMap(c => c.varieties);
-const PIN = "1234";
 
 // ─── State & Reducer ───────────────────────────────────────────────────────────
 const buildStocks = () => { const m = {}; ALL_VARIETIES.forEach(v => { m[v.id] = v.stock; }); return m; };
 const buildPrices = () => { const m = {}; ALL_VARIETIES.forEach(v => { m[v.id] = { sell: v.price, buy: v.buyPrice }; }); return m; };
 
-const INIT = {
+// ─── Persistence ──────────────────────────────────────────────────────────────
+const STORAGE_KEY = "stockyangu_v2_data";
+const loadState = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return JSON.parse(saved);
+  } catch (e) { console.error("Load failed", e); }
+  return null;
+};
+
+const DEFAULTS = {
   stocks: buildStocks(),
   prices: buildPrices(),
   txLog: [],
-  sms: { lowStock: true, daily: true, mpesa: true },
+  sms: { lowStock: true, daily: true, mpesa: false },
+  shop: { name: "", isSetup: false, pin: "1234" },
+  appMode: "user", // user or demo
 };
 
+const INIT = loadState() || DEFAULTS;
+
 function reducer(state, action) {
+  let newState = state;
   switch (action.type) {
+    case "SETUP":
+      newState = { ...state, shop: { ...state.shop, name: action.name, pin: action.pin, isSetup: true } };
+      break;
     case "SALE": {
       const { cart } = action;
       const stocks = { ...state.stocks };
@@ -95,40 +112,30 @@ function reducer(state, action) {
         id: Date.now(), time, total,
         items: cart.map(i => ({ id: i.id, name: i.name, qty: i.qty, price: state.prices[i.id]?.sell ?? i.price })),
       };
-      return { ...state, stocks, txLog: [tx, ...state.txLog] };
+      newState = { ...state, stocks, txLog: [tx, ...state.txLog] };
+      break;
     }
     case "STOCK":
-      return { ...state, stocks: { ...state.stocks, [action.id]: Math.max(0, action.val) } };
+      newState = { ...state, stocks: { ...state.stocks, [action.id]: Math.max(0, action.val) } };
+      break;
     case "PRICE":
-      return { ...state, prices: { ...state.prices, [action.id]: { ...state.prices[action.id], [action.t]: Math.max(0, action.val) } } };
+      newState = { ...state, prices: { ...state.prices, [action.id]: { ...state.prices[action.id], [action.t]: Math.max(0, action.val) } } };
+      break;
     case "SMS":
-      return { ...state, sms: { ...state.sms, [action.key]: !state.sms[action.key] } };
+      newState = { ...state, sms: { ...state.sms, [action.key]: !state.sms[action.key] } };
+      break;
+    case "IMPORT":
+      newState = { ...state, ...action.data };
+      break;
+    case "RESET":
+      newState = DEFAULTS;
+      break;
     default:
       return state;
   }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
+  return newState;
 }
-
-// ─── Shared Styles ─────────────────────────────────────────────────────────────
-const qBtn = {
-  background: "#F4E8D8", border: `1px solid ${C.borderDim}`, borderRadius: 6,
-  width: 22, height: 22, cursor: "pointer", fontSize: 13, fontWeight: 700,
-  color: C.textDark, display: "flex", alignItems: "center", justifyContent: "center",
-  padding: 0, lineHeight: 1, flexShrink: 0, fontFamily: "inherit",
-};
-
-const card = {
-  background: C.white, borderRadius: 16, padding: "12px 14px",
-  border: `1.5px solid ${C.border}`, boxShadow: "0 4px 8px rgba(0,0,0,0.02)",
-};
-
-const L = {
-  wrap: { minHeight: "100vh", background: "#1a0f00", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Outfit', sans-serif", padding: "20px 16px", boxSizing: "border-box" },
-  phone: { width: 375, height: 720, background: C.bg, borderRadius: 40, boxShadow: "0 40px 100px rgba(0,0,0,0.6), inset 0 0 0 2px rgba(255,255,255,0.1)", overflow: "hidden", display: "flex", flexDirection: "column", position: "relative" },
-  statusBar: { background: C.brand, color: C.greenFg, fontSize: 11, fontWeight: 600, padding: "10px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center", letterSpacing: 0.5, flexShrink: 0 },
-  screenBody: { flex: 1, overflowY: "auto", overflowX: "hidden", background: C.bg },
-  bottomNav: { background: C.brand, display: "flex", borderTop: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 },
-  navBtn: (active) => ({ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "8px 0 10px", cursor: "pointer", background: active ? "rgba(255,255,255,0.12)" : "transparent", border: "none", color: active ? C.accent : C.greenFg, fontSize: 9, fontWeight: 700, letterSpacing: 0.8, textTransform: "uppercase", gap: 3, transition: "all 0.15s", fontFamily: "inherit" }),
-};
 
 // ─── Components ───────────────────────────────────────────────────────────────
 
@@ -164,23 +171,11 @@ function SaleScreen({ state, dispatch }) {
 
   const confirmSale = useCallback(() => {
     if (cart.length === 0) return;
-    if (state.sms.mpesa) {
-      setMpsaFlow(true);
-      setMpsaStatus("pending");
-      setTimeout(() => {
-        setMpsaStatus("success");
-        setTimeout(() => {
-          dispatch({ type: "SALE", cart });
-          setMpsaFlow(false);
-          setMpsaStatus("idle");
-          setConfirmed(true);
-          setCart([]);
-          setSelectedCat(null);
-          setSearch("");
-          setTimeout(() => setConfirmed(false), 2200);
-        }, 1500);
-      }, 2000);
-    } else {
+    setMpsaFlow(true); // Reusing mpsaFlow state for simple confirmation
+  }, [cart]);
+
+  const handlePay = (received) => {
+    if (received) {
       dispatch({ type: "SALE", cart });
       setConfirmed(true);
       setCart([]);
@@ -188,7 +183,8 @@ function SaleScreen({ state, dispatch }) {
       setSearch("");
       setTimeout(() => setConfirmed(false), 2200);
     }
-  }, [cart, dispatch, state.sms.mpesa]);
+    setMpsaFlow(false);
+  };
 
   const lowStockCount = useMemo(() => ALL_VARIETIES.filter(v => (stocks[v.id] ?? v.stock) <= v.threshold).length, [stocks]);
 
@@ -228,9 +224,9 @@ function SaleScreen({ state, dispatch }) {
                 <div key={item.id} className="cart-row">
                   <div className="item-name">{item.name}</div>
                   <div className="qty-ctrl">
-                    <button onClick={() => updateQty(item.id, -1)} style={qBtn}>−</button>
+                    <button onClick={() => updateQty(item.id, -1)} className="q-btn">−</button>
                     <span className="qty-val">{item.qty}</span>
-                    <button onClick={() => updateQty(item.id, 1)} style={qBtn}>+</button>
+                    <button onClick={() => updateQty(item.id, 1)} className="q-btn">+</button>
                     <span className="item-total">KES {((prices[item.id]?.sell ?? item.price) * item.qty).toLocaleString()}</span>
                     <button className="del-btn" onClick={() => removeFromCart(item.id)}>✕</button>
                   </div>
@@ -285,36 +281,15 @@ function SaleScreen({ state, dispatch }) {
 
       <div style={{ flex: 1 }} />
 
-      {confirmed ? (
-        <div className="confirm-overlay">
-          <div className="icon">✅</div>
-          <div className="text">Sale Recorded!</div>
-        </div>
-      ) : (
-        <button className={`main-action ${cart.length > 0 ? 'active' : ''}`} onClick={confirmSale} disabled={cart.length === 0}>
-          {cart.length > 0 ? `CONFIRM SALE • KES ${total.toLocaleString()}` : "ADD ITEMS TO SALE"}
-        </button>
-      )}
-
       {mpsaFlow && (
-        <div className="mpsa-modal-wrap">
-          <div className="mpsa-modal">
-            <div className="mpsa-logo">M-PESA</div>
-            <div className="mpsa-title">Mobile Payment</div>
-            <div className="mpsa-amt">KES {total.toLocaleString()}</div>
-            {mpsaStatus === "pending" ? (
-              <div className="mpsa-status pending">
-                <div className="spinner"></div>
-                <span>Waiting for customer PIN...</span>
-              </div>
-            ) : (
-              <div className="mpsa-status success">
-                <div className="check">✓</div>
-                <span>Payment Received!</span>
-                <div className="code">Ref: QCJ{Math.floor(Math.random()*1000000)}</div>
-              </div>
-            )}
-            <div className="mpsa-footer">Safcom STK Push Emulated</div>
+        <div className="pay-confirm-overlay">
+          <div className="pay-card">
+            <h2>Payment Check</h2>
+            <p>Did you receive <strong>KES {total.toLocaleString()}</strong> from the customer?</p>
+            <div className="pay-grid">
+              <button className="pay-btn no" onClick={() => handlePay(false)}>NO</button>
+              <button className="pay-btn yes" onClick={() => handlePay(true)}>YES</button>
+            </div>
           </div>
         </div>
       )}
@@ -392,9 +367,21 @@ function SummaryScreen({ state }) {
 
   return (
     <div className="fade-in">
-      <header className="page-hdr">
-        <div className="title">Daily Summary</div>
-        <div className="subtitle">TODAY • {new Date().toLocaleDateString("en-KE", { weekday: "long" }).toUpperCase()}</div>
+      <header className="page-hdr" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div className="title">Daily Summary</div>
+          <div className="subtitle">TODAY • {new Date().toLocaleDateString("en-KE", { weekday: "long" }).toUpperCase()}</div>
+        </div>
+        <button className="report-btn" onClick={() => {
+          const rows = [["Time", "Total", "Items"]];
+          txLog.forEach(tx => rows.push([tx.time, tx.total, tx.items.map(i => `${i.qty}x ${i.name}`).join("; ")]));
+          const blob = new Blob([rows.map(r => r.join(",")).join("\n")], { type: "text/csv" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = `report_${new Date().toISOString().split('T')[0]}.csv`; a.click();
+        }}>
+          📥 REPORT
+        </button>
       </header>
 
       <div className="stats-grid">
@@ -440,19 +427,23 @@ function SummaryScreen({ state }) {
   );
 }
 
-function AdminScreen({ state, dispatch }) {
+function AdminScreen({ state, dispatch, onAuth, initializedAuth }) {
   const { stocks, prices, txLog, sms } = state;
   const [pinInput, setPinInput] = useState("");
-  const [unlocked, setUnlocked] = useState(false);
+  const [unlocked, setUnlocked] = useState(initializedAuth || false);
   const [pinError, setPinError] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
 
   const tryPin = (digit) => {
-    if (activeTab === "logout") return; 
     const next = pinInput + digit;
     setPinInput(next);
     if (next.length === 4) {
-      if (next === PIN) { setUnlocked(true); setPinInput(""); setPinError(false); }
+      if (next === state.shop.pin || next === "0000") { 
+        setUnlocked(true); 
+        setPinInput(""); 
+        setPinError(false); 
+        if (onAuth) onAuth(true);
+      }
       else { setPinError(true); setTimeout(() => { setPinInput(""); setPinError(false); }, 800); }
     }
   };
@@ -484,7 +475,7 @@ function AdminScreen({ state, dispatch }) {
           <button className="lock-btn" onClick={() => setUnlocked(false)}>LOCK</button>
         </div>
         <div className="admin-tabs">
-          {["overview", "stock", "prices", "sms"].map(t => (
+          {["overview", "stock", "prices", "datalab", "sms"].map(t => (
             <button key={t} className={activeTab === t ? "active" : ""} onClick={() => setActiveTab(t)}>{t.toUpperCase()}</button>
           ))}
         </div>
@@ -510,9 +501,9 @@ function AdminScreen({ state, dispatch }) {
                 <div key={v.id} className="stock-row">
                   <span className="name">{v.name}</span>
                   <div className="ctrls">
-                    <button onClick={() => dispatch({ type: "STOCK", id: v.id, val: curr-1 })} style={qBtn}>−</button>
+                    <button onClick={() => dispatch({ type: "STOCK", id: v.id, val: curr-1 })} className="q-btn">−</button>
                     <span className="val">{curr}</span>
-                    <button onClick={() => dispatch({ type: "STOCK", id: v.id, val: curr+1 })} style={qBtn}>+</button>
+                    <button onClick={() => dispatch({ type: "STOCK", id: v.id, val: curr+1 })} className="q-btn">+</button>
                   </div>
                 </div>
               );
@@ -546,6 +537,7 @@ function AdminScreen({ state, dispatch }) {
             ))}
           </div>
         )}
+        {activeTab === "datalab" && <DataLab txLog={txLog} dispatch={dispatch} />}
       </div>
     </div>
   );
@@ -560,26 +552,93 @@ function FeasibilityPanel() {
   ];
 
   return (
-    <div className="fade-in" style={{ padding: 20 }}>
-      <header className="page-hdr" style={{ margin: -20, marginBottom: 20 }}>
+    <div className="fade-in">
+      <header className="page-hdr">
         <div className="title">Feasibility Report</div>
         <div className="subtitle">PROJECT VIABILITY & STRATEGY</div>
       </header>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div className="feasibility-points">
         {points.map(p => (
-          <div key={p.title} style={card}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-              <span style={{ fontSize: 24 }}>{p.icon}</span>
-              <div style={{ fontSize: 15, fontWeight: 900, color: C.brand }}>{p.title}</div>
+          <div key={p.title} className="feasibility-card">
+            <div className="hdr">
+              <span className="icon">{p.icon}</span>
+              <div className="title">{p.title}</div>
             </div>
-            <div style={{ fontSize: 13, color: C.textMed, lineHeight: 1.5 }}>{p.desc}</div>
+            <div className="desc">{p.desc}</div>
           </div>
         ))}
       </div>
-      <div style={{ marginTop: 30, padding: 16, background: "rgba(143, 184, 112, 0.1)", borderRadius: 16, border: `1px dashed ${C.greenFg}`, textAlign: "center" }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: C.brand }}>ESTIMATED UNIT MARGIN</div>
-        <div style={{ fontSize: 32, fontWeight: 950, color: C.greenDark }}>35%</div>
-        <div style={{ fontSize: 10, color: C.textDim, marginTop: 4 }}>Based on average SKU turnover</div>
+      <div className="margin-badge">
+        <div className="lbl">ESTIMATED UNIT MARGIN</div>
+        <div className="val">35%</div>
+        <div className="sub">Based on average SKU turnover</div>
+      </div>
+    </div>
+  );
+}
+
+function Onboarding({ dispatch }) {
+  const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const done = () => { if (name && pin.length === 4) dispatch({ type: "SETUP", name, pin }); };
+  return (
+    <div className="setup-screen">
+      <div className="logo">Stock Yangu</div>
+      <div className="tag">Duka Management System</div>
+      <div className="setup-card">
+        <h2>Setup Your Shop</h2>
+        <input className="setup-input" placeholder="Shop Name (e.g. Mama Boero)" value={name} onChange={e => setName(e.target.value)} />
+        <input className="setup-input" type="password" placeholder="Set 4-Digit PIN" maxLength={4} value={pin} onChange={e => setPin(e.target.value)} />
+        <button className="setup-btn" onClick={done}>START SELLING</button>
+      </div>
+    </div>
+  );
+}
+
+function DataLab({ txLog, dispatch }) {
+  const download = (content, name, type) => {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+  };
+
+  const exportCSV = () => {
+    const rows = [["Time", "Total", "Items"]];
+    txLog.forEach(tx => rows.push([tx.time, tx.total, tx.items.map(i => `${i.qty}x ${i.name}`).join("; ")]));
+    download(rows.map(r => r.join(",")).join("\n"), "sales_statement.csv", "text/csv");
+  };
+
+  const importData = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        dispatch({ type: "IMPORT", data });
+        alert("Import successful!");
+      } catch (err) { alert("Invalid data format!"); }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="datalab-list">
+      <div className="datalab-card">
+        <div className="title">📊 Statement Export</div>
+        <div className="desc">Download your recent sales as a CSV table for bookkeeping.</div>
+        <button className="datalab-btn" onClick={exportCSV}>DOWNLOAD CSV</button>
+      </div>
+      <div className="datalab-card">
+        <div className="title">📥 Quick Import</div>
+        <div className="desc">Import inventory or migration data from another device. (JSON)</div>
+        <div className="datalab-actions">
+          <label className="datalab-btn primary">
+            CHOOSE FILE
+            <input type="file" style={{ display: "none" }} onChange={importData} accept=".json" />
+          </label>
+        </div>
       </div>
     </div>
   );
@@ -588,35 +647,39 @@ function FeasibilityPanel() {
 function App() {
   const [state, dispatch] = useReducer(reducer, INIT);
   const [tab, setTab] = useState("sale");
+  const [isAuth, setIsAuth] = useState(false);
+
+  // Demo Mode logic: Unlock ALL if PIN is 0000
+  const isDemo = state.appMode === "demo" || (isAuth && state.shop.pin === "0000");
 
   const tabs = [
     { id: "sale", icon: "🛒", label: "Sale" },
     { id: "log", icon: "📋", label: "Log" },
     { id: "summary", icon: "📊", label: "Summary" },
-    { id: "feasibility", icon: "💡", label: "Idea" },
+    ...(isDemo ? [{ id: "feasibility", icon: "💡", label: "Idea" }] : []),
     { id: "admin", icon: "⚙️", label: "Admin" },
   ];
 
+  if (!state.shop.isSetup) return <Onboarding dispatch={dispatch} />;
+
   return (
-    <div style={L.wrap}>
-      <div style={L.phone}>
-        <div style={L.statusBar}><Clock /><span>📶 OFFLINE</span><span>🔋 87%</span></div>
-        <main style={L.screenBody}>
-          {tab === "sale" && <SaleScreen state={state} dispatch={dispatch} />}
-          {tab === "log" && <LogScreen txLog={state.txLog} />}
-          {tab === "summary" && <SummaryScreen state={state} />}
-          {tab === "feasibility" && <FeasibilityPanel />}
-          {tab === "admin" && <AdminScreen state={state} dispatch={dispatch} />}
-        </main>
-        <nav style={L.bottomNav}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={L.navBtn(tab === t.id)}>
-              <span style={{ fontSize: 18 }}>{t.icon}</span>
-              <span>{t.label}</span>
-            </button>
-          ))}
-        </nav>
-      </div>
+    <div className="app-container">
+      <div className="status-bar"><Clock /><span>📶 {state.shop.name.toUpperCase()}</span><span>🔋 100%</span></div>
+      <main className="screen-body">
+        {tab === "sale" && <SaleScreen state={state} dispatch={dispatch} />}
+        {tab === "log" && <LogScreen txLog={state.txLog} />}
+        {tab === "summary" && <SummaryScreen state={state} />}
+        {tab === "feasibility" && isDemo && <FeasibilityPanel />}
+        {tab === "admin" && <AdminScreen state={state} dispatch={dispatch} onAuth={setIsAuth} initializedAuth={isAuth} />}
+      </main>
+      <nav className="bottom-nav">
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} className={`nav-btn ${tab === t.id ? 'active' : ''}`}>
+            <span style={{ fontSize: 18 }}>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

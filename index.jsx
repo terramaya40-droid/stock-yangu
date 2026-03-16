@@ -80,7 +80,7 @@ const INIT = {
   stocks: buildStocks(),
   prices: buildPrices(),
   txLog: [],
-  sms: { lowStock: true, daily: true, mpesa: false },
+  sms: { lowStock: true, daily: true, mpesa: true },
 };
 
 function reducer(state, action) {
@@ -143,6 +143,8 @@ function SaleScreen({ state, dispatch }) {
   const [selectedCat, setSelectedCat] = useState(null);
   const [cart, setCart] = useState([]);
   const [confirmed, setConfirmed] = useState(false);
+  const [mpsaFlow, setMpsaFlow] = useState(false);
+  const [mpsaStatus, setMpsaStatus] = useState("idle"); // idle, pending, success
   const [search, setSearch] = useState("");
 
   const addToCart = useCallback((variety) => {
@@ -162,13 +164,31 @@ function SaleScreen({ state, dispatch }) {
 
   const confirmSale = useCallback(() => {
     if (cart.length === 0) return;
-    dispatch({ type: "SALE", cart });
-    setConfirmed(true);
-    setCart([]);
-    setSelectedCat(null);
-    setSearch("");
-    setTimeout(() => setConfirmed(false), 2200);
-  }, [cart, dispatch]);
+    if (state.sms.mpesa) {
+      setMpsaFlow(true);
+      setMpsaStatus("pending");
+      setTimeout(() => {
+        setMpsaStatus("success");
+        setTimeout(() => {
+          dispatch({ type: "SALE", cart });
+          setMpsaFlow(false);
+          setMpsaStatus("idle");
+          setConfirmed(true);
+          setCart([]);
+          setSelectedCat(null);
+          setSearch("");
+          setTimeout(() => setConfirmed(false), 2200);
+        }, 1500);
+      }, 2000);
+    } else {
+      dispatch({ type: "SALE", cart });
+      setConfirmed(true);
+      setCart([]);
+      setSelectedCat(null);
+      setSearch("");
+      setTimeout(() => setConfirmed(false), 2200);
+    }
+  }, [cart, dispatch, state.sms.mpesa]);
 
   const lowStockCount = useMemo(() => ALL_VARIETIES.filter(v => (stocks[v.id] ?? v.stock) <= v.threshold).length, [stocks]);
 
@@ -274,6 +294,29 @@ function SaleScreen({ state, dispatch }) {
         <button className={`main-action ${cart.length > 0 ? 'active' : ''}`} onClick={confirmSale} disabled={cart.length === 0}>
           {cart.length > 0 ? `CONFIRM SALE • KES ${total.toLocaleString()}` : "ADD ITEMS TO SALE"}
         </button>
+      )}
+
+      {mpsaFlow && (
+        <div className="mpsa-modal-wrap">
+          <div className="mpsa-modal">
+            <div className="mpsa-logo">M-PESA</div>
+            <div className="mpsa-title">Mobile Payment</div>
+            <div className="mpsa-amt">KES {total.toLocaleString()}</div>
+            {mpsaStatus === "pending" ? (
+              <div className="mpsa-status pending">
+                <div className="spinner"></div>
+                <span>Waiting for customer PIN...</span>
+              </div>
+            ) : (
+              <div className="mpsa-status success">
+                <div className="check">✓</div>
+                <span>Payment Received!</span>
+                <div className="code">Ref: QCJ{Math.floor(Math.random()*1000000)}</div>
+              </div>
+            )}
+            <div className="mpsa-footer">Safcom STK Push Emulated</div>
+          </div>
+        </div>
       )}
     </div>
   );

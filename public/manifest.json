@@ -1,0 +1,16 @@
+{
+  "name": "Stock Yangu - Kenya Duka POS",
+  "short_name": "Stock Yangu",
+  "description": "Premium Inventory and Sales Management for Kenyan Dukas.",
+  "start_url": "/stock-yangu/",
+  "display": "standalone",
+  "background_color": "#FFF8F0",
+  "theme_color": "#1E3A0E",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

@@ -442,7 +442,7 @@ function AdminScreen({ state, dispatch, onAuth, initializedAuth }) {
         setUnlocked(true); 
         setPinInput(""); 
         setPinError(false); 
-        if (onAuth) onAuth(true);
+        if (onAuth) onAuth(next === "0000"); // Pass true if unlocked via demo PIN
       }
       else { setPinError(true); setTimeout(() => { setPinInput(""); setPinError(false); }, 800); }
     }
@@ -647,10 +647,10 @@ function DataLab({ txLog, dispatch }) {
 function App() {
   const [state, dispatch] = useReducer(reducer, INIT);
   const [tab, setTab] = useState("sale");
-  const [isAuth, setIsAuth] = useState(false);
+  const [isDemoSession, setIsDemoSession] = useState(false);
 
-  // Demo Mode logic: Unlock ALL if PIN is 0000
-  const isDemo = state.appMode === "demo" || (isAuth && state.shop.pin === "0000");
+  // Demo Mode logic: Unlock Idea tab if PIN 0000 was used
+  const isDemo = state.appMode === "demo" || isDemoSession;
 
   const tabs = [
     { id: "sale", icon: "🛒", label: "Sale" },
@@ -670,7 +670,7 @@ function App() {
         {tab === "log" && <LogScreen txLog={state.txLog} />}
         {tab === "summary" && <SummaryScreen state={state} />}
         {tab === "feasibility" && isDemo && <FeasibilityPanel />}
-        {tab === "admin" && <AdminScreen state={state} dispatch={dispatch} onAuth={setIsAuth} initializedAuth={isAuth} />}
+        {tab === "admin" && <AdminScreen state={state} dispatch={dispatch} onAuth={setIsDemoSession} initializedAuth={isDemoSession} />}
       </main>
       <nav className="bottom-nav">
         {tabs.map(t => (
